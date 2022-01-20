@@ -1,0 +1,49 @@
+name: download-ipks
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'select device to build'
+        default: 'r2s'
+        required: true
+
+jobs:
+
+  generate_firmware:
+    if: always()
+    name: Generate ${{ github.event.inputs.device }} firmware
+    runs-on: ubuntu-latest
+    env:
+      DEVICE: ${{ github.event.inputs.device }}
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 1
+
+      - name: Generate firmware
+        run: |
+          sudo apt update && sudo apt install qemu-utils
+          sudo sysctl vm.swappiness=0
+          ulimit -SHn 65000
+          curl -L https://github.com/stupidloud/sshactions/releases/download/cache/ib-$DEVICE.tar.xz | tar -Jxvf -
+          set -x
+          mv *imagebuilder* ib && cd ib
+          mkdir -p $GITHUB_WORKSPACE/release
+          tar -cvf ipks.tar packages/*.ipk
+          mv ipks.tar $GITHUB_WORKSPACE/release/
+          
+          echo "strDate=$(TZ=UTC-8 date +%Y-%m-%d)" >> $GITHUB_ENV
+          echo "strDevice=$(echo $DEVICE | awk '{print toupper($0)}')" >> $GITHUB_ENV
+          
+      - name: Upload release asset
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./release/*
+          tag: ${{env.strDate}}
+          file_glob: true
+          overwrite: true
+          release_name: ${{env.strDate}} 自动发布
