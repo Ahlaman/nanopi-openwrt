@@ -133,7 +133,7 @@ jobs:
         run: |
           cd ~/lede
           df -h .
-          rm rf bin tmp
+          rm -rf bin tmp
           df -h .
 
       - name: Generate firmware
