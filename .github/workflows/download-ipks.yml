@@ -1,4 +1,4 @@
-name: build
+name: download-ipks
 
 on:
   repository_dispatch:
@@ -12,7 +12,6 @@ on:
 jobs:
 
   generate_firmware:
-    needs: build_packages
     if: always()
     name: Generate ${{ github.event.inputs.device }} firmware
     runs-on: ubuntu-18.04
