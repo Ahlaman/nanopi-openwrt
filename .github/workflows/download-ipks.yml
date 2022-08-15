@@ -35,6 +35,9 @@ jobs:
           tar -cvf ipks.tar packages/*.ipk
           mv ipks.tar $GITHUB_WORKSPACE/release/
           
+          echo "strDate=$(TZ=UTC-8 date +%Y-%m-%d)" >> $GITHUB_ENV
+          echo "strDevice=$(echo $DEVICE | awk '{print toupper($0)}')" >> $GITHUB_ENV
+          
       - name: Upload release asset
         uses: svenstaro/upload-release-action@v2
         with:
