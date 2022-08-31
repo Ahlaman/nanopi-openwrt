@@ -9,13 +9,21 @@ on:
         default: 'r2s'
         required: true
       branch:
-        description: 'seleclt openwrt branch'
+        description: 'select openwrt branch'
         default: 'master'
+        required: true
+      mclean:
+        description: 'make clean if true'
+        default: 'false'
+        required: true
+      pclean:
+        description: 'make package/clean if true'
+        default: 'false'
         required: true
 
 jobs:
 
-  download_packages:
+  build_packages:
     name: Download ${{ github.event.inputs.device }} packages
     runs-on: ubuntu-20.04
     env:
@@ -50,7 +58,10 @@ jobs:
         run: |
           cd
           curl -sL https://raw.githubusercontent.com/klever1988/nanopi-openwrt/zstd-bin/zstd | sudo tee /usr/bin/zstd > /dev/null
-          truncate -s 33g lede.img && mkfs.btrfs -M lede.img
+          for i in {1..20}
+          do
+            curl -sL --fail https://github.com/ahlaman/sshactions/releases/download/cache/lede.$DEVICE.img.zst.0$i || break
+          done | zstdmt -d -o lede.img || (truncate -s 33g lede.img && mkfs.btrfs -M lede.img)
           LOOP_DEVICE=$(losetup -f) && echo "LOOP_DEVICE=$LOOP_DEVICE" >> $GITHUB_ENV
           sudo losetup -P --direct-io $LOOP_DEVICE lede.img
           mkdir lede && sudo mount -o nossd,compress=zstd $LOOP_DEVICE lede
@@ -91,7 +102,7 @@ jobs:
           cat .config
 
       - name: Clean build cache
-        if: ${{ github.event.inputs.device != '' }}
+        if: ${{ github.event.inputs.mclean == 'true' }}
         run: |
           cd ~/lede
           df -h .
@@ -104,9 +115,12 @@ jobs:
           ulimit -SHn 65000
           cd ~/lede
           while true; do make download -j && break || true; done
-          make -j$[`nproc`+1] IGNORE_ERRORS=1
-          if [ ! -e ~/lede/bin/targets/*/*/*imagebuilder*xz ]; then make V=sc; fi
-          mv `ls ~/lede/bin/targets/*/*/*imagebuilder*xz` ~/ib-$DEVICE.tar.xz
+          usedSec=$(( `date +%s` - `date -d "$createdAt" +%s`  ))
+          timeoutSec=$(( 6*60*60 - 22*60 - $usedSec  )) 
+          time timeout $timeoutSec make -j$[`nproc`+1] IGNORE_ERRORS=1
+          #make -j$[`nproc`+1] IGNORE_ERRORS=1
+          #if [ ! -e ~/lede/bin/targets/*/*/*imagebuilder*xz ]; then make -j1 V=sc; fi
+          if [ ! -e ~/lede/bin/targets/*/*/*imagebuilder*xz ]; then mv `ls ~/lede/bin/targets/*/*/*imagebuilder*xz` ~/ib-$DEVICE.tar.xz
 
           echo "======================="
           echo "Space usage:"
@@ -118,15 +132,82 @@ jobs:
           du -h --max-depth=1 ./bin
           
       - name: Clean build cache
+        if: ${{ github.event.inputs.pclean == 'true' }}
         run: |
           cd ~/lede
           df -h .
-          rm -rf bin tmp
+          make package/clean
           df -h .
+          
+      - name: Prepare artifact
+        run: |
+          cd
+          mkdir -p ./artifact/buildinfo
+          cd lede
+          cp -rf $(find ./bin/targets/ -type f -name "*.buildinfo" -o -name "*.manifest") ../artifact/buildinfo/
+          cp -rf .config ../artifact/buildinfo/
+          echo "strDate=$(TZ=UTC-8 date +%Y-%m-%d)" >> $GITHUB_ENV
+          echo "strDevice=$(echo $DEVICE | awk '{print toupper($0)}')" >> $GITHUB_ENV
+          rm -rf bin tmp
+          cd ..
+          mv artifact $GITHUB_WORKSPACE
+          
+      - name: Deliver buildinfo
+        uses: actions/upload-artifact@v2
+        with:
+          name: OpenWrt_buildinfo
+          path: ./artifact/buildinfo/
+          
+      - name: Save cache state
+        run: |
+          cd
+          sleep 60
+          sudo mount -o remount,compress=no,nodatacow,nodatasum lede
+          cd lede/; pv /dev/zero > zerospace || true; sync; rm -f zerospace; cd -
+          sleep 60
+          sudo umount lede
+          sudo losetup -d $LOOP_DEVICE
+          export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
+          export cache_path='github.com/repos/ahlaman/sshactions/releases'
+          export cache_repo_id='latest'
+          zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
+          for i in {1..3}; do
+          ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
+          echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | \
+          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
+          echo $ret | jq -r '.assets[] | select(.name == "ib-'$DEVICE'.tar.xz").id' | \
+          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
+          #上传
+          if [ -e ~/ib-$DEVICE.tar.xz ]; then
+            ls *img.zst* ib-$DEVICE.tar.xz | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
+          else
+            ls *img.zst* | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
+          fi
+          set +e
+          #成功上传才退出循环
+          for i in {1..20}; do curl -sL --fail https://github.com/ahlaman/sshactions/releases/download/cache/lede.$DEVICE.img.zst.0$i || break; done | zstdmt -d -o /dev/null
+          if [ $? -eq 0 ]; then break; fi
+          done
+          set -e
 
+  generate_firmware:
+    needs: build_packages
+    name: Generate ${{ github.event.inputs.device }} firmware
+    runs-on: ubuntu-18.04
+    env:
+      DEVICE: ${{ github.event.inputs.device }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 1
+          
       - name: Generate firmware
         run: |
-          cat ~/ib-$DEVICE.tar.xz | tar -Jxvf -
+          sudo apt update && sudo apt install qemu-utils
+          sudo sysctl vm.swappiness=0
+          ulimit -SHn 65000
+          curl -L https://github.com/ahlaman/sshactions/releases/download/cache/ib-$DEVICE.tar.xz | tar -Jxvf -
+          #cat ~/ib-$DEVICE.tar.xz | tar -Jxvf -
           set -x
           mv *imagebuilder* ib && cd ib
           . $GITHUB_WORKSPACE/scripts/merge_files.sh
@@ -171,4 +252,4 @@ jobs:
           tag: ${{env.strDate}}
           file_glob: true
           overwrite: true
-          release_name: ${{env.strDate}} 自动发布
+          release_name: ${{env.strDate}}
