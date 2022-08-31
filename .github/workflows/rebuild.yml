@@ -115,12 +115,57 @@ jobs:
           ulimit -SHn 65000
           cd ~/lede
           while true; do make download -j && break || true; done
+          
+          echo -e "$(nproc) thread compile"
+          
+          createdAt=$(gh -R ${GITHUB_REPOSITORY}  run list --json databaseId,createdAt --jq ".[]|select(.databaseId==${{ github.run_id }})|.createdAt")
+          echo "createdAt=$createdAt" >> $GITHUB_ENV
+          set -x
+          mkdir -p env/
+          touch env/toolchain.hash
+          CURRENT_HASH=$(git log --pretty=tformat:"%H" -n1 tools toolchain) 
+          CACHE_HASH=$(cat env/toolchain.hash)
+          if [ -z "$CACHE_HASH" ] || [ "$CURRENT_HASH" != "$CACHE_HASH" ]; then
+            echo 'star compile tools'
+            time make tools/compile -j$[`nproc`+1] || make tools/compile -j1 V=s
+            # tools 编译的时候和 toolchain 貌似会一起编译
+            time make toolchain/compile -j$[`nproc`+1] || make toolchain/compile -j1 V=s
+            echo $CURRENT_HASH > env/toolchain.hash
+          fi 
+          make buildinfo
+          make diffconfig buildversion feedsversion
+          time make target/compile -j$[`nproc`+1] IGNORE_ERRORS="m n" BUILD_LOG=1 || \
+          yes n | make target/compile -j1 V=s IGNORE_ERRORS=1
           usedSec=$(( `date +%s` - `date -d "$createdAt" +%s`  ))
-          timeoutSec=$(( 6*60*60 - 22*60 - $usedSec  )) 
-          time timeout $timeoutSec make -j$[`nproc`+1] IGNORE_ERRORS=1
-          #make -j$[`nproc`+1] IGNORE_ERRORS=1
-          #if [ ! -e ~/lede/bin/targets/*/*/*imagebuilder*xz ]; then make -j1 V=sc; fi
-          if [ ! -e ~/lede/bin/targets/*/*/*imagebuilder*xz ]; then mv `ls ~/lede/bin/targets/*/*/*imagebuilder*xz` ~/ib-$DEVICE.tar.xz
+          # 6小时超时，减去上传 cache 预留的 22 分钟后的时间作为 timeout 时间
+          reserved_time=22
+          # 每种缓存方式时间预留不一样
+          timeoutSec=$(( 6*60*60 - ${reserved_time}*60 - $usedSec  )) 
+          time timeout $timeoutSec make package/compile -j$[`nproc`+1] IGNORE_ERRORS=1 |& tee -a /tmp/build.log
+          if ! grep -qw Terminated /tmp/build.log;then
+            usedSec=$(( `date +%s` - `date -d "$createdAt" +%s`  ))
+            if grep -qw 're-run make' /tmp/build.log;then
+              # 小于 5 小时构建完，此刻单独构建失败的
+              if [ $usedSec -lt $((47*60*6)) ];then
+                timeoutSec=$(( 6*60*60 - ${reserved_time}*60 - $usedSec  )) 
+                echo 'failed: try to V=s'
+                time timeout $timeoutSec make package/compile -j1 V=s IGNORE_ERRORS=1 || make package/index
+              fi
+            else
+              time make package/install
+              timeoutSec=$(( 6*60*60 - ${reserved_time}*60 - $usedSec  ))
+              if [ $timeoutSec -gt 0 ];then
+                command="timeout $timeoutSec"
+              fi
+              time make package/index || true
+              time $command make target/install || make target/install -j1 V=s
+              make json_overview_image_info
+              make checksum
+            fi
+          else
+              time make package/index || true
+          fi
+          set +x
 
           echo "======================="
           echo "Space usage:"
@@ -130,6 +175,24 @@ jobs:
           du -h --max-depth=1 ./ --exclude=build_dir --exclude=bin
           du -h --max-depth=1 ./build_dir
           du -h --max-depth=1 ./bin
+          
+      - name: retry with V=s in failed packages
+        if: (!cancelled())
+        run: |
+          cd ~/lede
+          # 编译时间很早完成的话，make -v 看下 ERROR: package/feeds/routing/cjdns failed to build. 的编译错误信息
+          if [ -n "${{ secrets.gh_token }}" ];then
+            usedSec=$(( `date +%s` - `date -d "$createdAt" +%s`  ))
+            # 小于 5 小时构建完，此刻单独构建失败的
+            if [ $usedSec -lt $((4*60*60)) ];then
+              grep -Po 'ERROR:\s+\K\S+' /tmp/build.log || true
+              echo '-------------分割线-----------'
+              for pkg in `grep -Po 'ERROR:\s+\K\S+' /tmp/build.log`;do
+                  echo "开始单独尝试 make $pkg/compile V=s 编译查看详细信息"
+                  make $pkg/compile V=s || true
+              done
+            fi
+          fi  
           
       - name: Clean build cache
         if: ${{ github.event.inputs.pclean == 'true' }}
