@@ -21,14 +21,17 @@ on:
         default: 'false'
         required: true
 
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  DEVICE: ${{ github.event.inputs.device }}
+  BRANCH: ${{ github.event.inputs.branch }}
+  TZ: Asia/Shanghai
+
 jobs:
 
   build_packages:
     name: Download ${{ github.event.inputs.device }} packages
     runs-on: ubuntu-20.04
-    env:
-      DEVICE: ${{ github.event.inputs.device }}
-      BRANCH: ${{ github.event.inputs.branch }}
     if: github.repository_owner=='Ahlaman'
 
     steps:
@@ -110,7 +113,6 @@ jobs:
           df -h .
           
       - name: Build and deploy packages
-        timeout-minutes: 1440
         run: |
           ulimit -SHn 65000
           cd ~/lede
@@ -257,8 +259,6 @@ jobs:
     needs: build_packages
     name: Generate ${{ github.event.inputs.device }} firmware
     runs-on: ubuntu-18.04
-    env:
-      DEVICE: ${{ github.event.inputs.device }}
     steps:
       - uses: actions/checkout@v2
         with:
