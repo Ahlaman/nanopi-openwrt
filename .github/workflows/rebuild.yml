@@ -150,7 +150,6 @@ jobs:
 
           zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
           ls
-          ls lede.$DEVICE.img.zst
           echo '上传编译cache: lede.img'
           while true; do
           ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
