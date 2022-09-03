@@ -121,7 +121,6 @@ jobs:
       - name: Build and deploy packages
         id: compile
         run: |
-          exit 1
           ulimit -SHn 65000
           cd ~/lede
           while true; do make download -j && break || true; done
