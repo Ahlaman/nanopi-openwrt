@@ -29,7 +29,7 @@ env:
 
 jobs:
 
-  build_packages:
+  build_packages_v2:
     name: Download ${{ github.event.inputs.device }} packages
     runs-on: ubuntu-20.04
     if: github.repository_owner=='Ahlaman'
@@ -74,6 +74,12 @@ jobs:
           else
           sudo chown $USER:$(id -gn) lede && git clone -b $BRANCH --single-branch https://github.com/coolsnowwolf/lede lede
           fi
+          export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
+          export cache_path='github.com/repos/${{github.repository}}/releases'
+          # 访问api.$cache_path拿到cache_repo_id
+          # https://docs.github.com/cn/rest/releases/releases#list-releases
+          export cache_repo_id='76202864'
+          mkdir -p $GITHUB_WORKSPACE/release
 
       - name: Update feeds and packages
         run: |
@@ -170,7 +176,7 @@ jobs:
           release_name: cache
 
       - name: Clean build cache
-        if: ${{ github.event.inputs.mclean == 'true' }}
+        if: github.event.inputs.mclean == 'true'
         run: |
           cd ~/lede
           df -h .
@@ -178,6 +184,7 @@ jobs:
           df -h .
           
       - name: Build and deploy packages
+        id: compile
         run: |
           exit 1
           ulimit -SHn 65000
@@ -236,15 +243,16 @@ jobs:
           set +x
 
           if [ -e ~/lede/bin/targets/*/*/*imagebuilder*xz ]; then
+            echo "::set-output name=uploadImageBuilder::true"
             echo "success build"
-            mv `ls ~/lede/bin/targets/*/*/*imagebuilder*xz` ~/ib-$DEVICE.tar.xz
+            mv `ls ~/lede/bin/targets/*/*/*imagebuilder*xz` $GITHUB_WORKSPACE/release/ib-$DEVICE.tar.xz
           fi
 
           echo "======================="
           echo "Space usage:"
           echo "======================="
           df -h
-          
+          echo "======================="
           df -i
           echo "======================="
           du -h --max-depth=1 ./ --exclude=build_dir --exclude=bin
@@ -270,7 +278,7 @@ jobs:
           fi  
 
       - name: Clean build cache
-        if: ${{ github.event.inputs.pclean == 'true' }}
+        if: github.event.inputs.pclean == 'true' && !cancelled()
         run: |
           cd ~/lede
           df -h .
@@ -297,29 +305,32 @@ jobs:
           path: ./artifact/buildinfo/
           
       - name: Save imagebuilder
+        if: steps.compile.outputs.uploadImageBuilder && !cancelled()
         run: |
           cd
-          export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
-          export cache_path='github.com/repos/${{github.repository}}/releases'
-          # 访问api.$cache_path拿到cache_repo_id
-          # https://docs.github.com/cn/rest/releases/releases#list-releases
-          export cache_repo_id='76202864'
-          mkdir -p $GITHUB_WORKSPACE/release
-          if [ -e ~/ib-$DEVICE.tar.xz ]; then
-            echo '上传imagebuilder'
-            while true; do
-            ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
-            echo $ret | jq -r '.assets[] | select(.name == "ib-'$DEVICE'.tar.xz").id' | \
-            xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
-            #上传
-            ls ~/ib-$DEVICE.tar.xz | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
-            done
-            rm -f ~/ib-$DEVICE.tar.xz
-          fi
+          echo '上传imagebuilder'
+          ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
+          echo $ret | jq -r '.assets[] | select(.name == "ib-'$DEVICE'.tar.xz").id' | xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
+          #上传
+          #ls ~/ib-$DEVICE.tar.xz | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
+
+      - name: Upload release asset
+        uses: svenstaro/upload-release-action@v2
+        if: steps.compile.outputs.uploadImageBuilder && !cancelled()
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./release/*
+          tag: cache
+          file_glob: true
+          overwrite: true
+          release_name: cache
 
       - name: Clean space for upload cache
+        if: (!cancelled())
         continue-on-error: true
         run: |
+          rm -rf $GITHUB_WORKSPACE/release/*
+          rm -rf $GITHUB_WORKSPACE/artifact
           sync
           nohup sh -c '
           echo "Listing 100 largest packages"
@@ -338,6 +349,7 @@ jobs:
           ' &
 
       - name: Save cache state
+        if: (!cancelled())
         run: |
           cd
           sleep 1
@@ -357,17 +369,25 @@ jobs:
 
           zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
           mv `ls lede.$DEVICE.img.zst.*` $GITHUB_WORKSPACE/release
-          rm -f ~/lede.img
           echo '上传编译cache: lede.img'
           ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
-          echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | \
-          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
+          echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
           #上传
-          ls *img.zst* | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
-          rm -f *img.zst*
+          #ls *img.zst* | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
+
+      - name: Upload release asset
+        uses: svenstaro/upload-release-action@v2
+        if: (!cancelled())
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./release/*
+          tag: cache
+          file_glob: true
+          overwrite: true
+          release_name: cache
 
   generate_firmware:
-    needs: build_packages
+    needs: build_packages_v2
     name: Generate ${{ github.event.inputs.device }} firmware
     runs-on: ubuntu-18.04
     steps:
@@ -380,8 +400,7 @@ jobs:
           sudo apt update && sudo apt install qemu-utils
           sudo sysctl vm.swappiness=0
           ulimit -SHn 65000
-          curl -L https://github.com/${{github.repository_owner}}/sshactions/releases/download/cache/ib-$DEVICE.tar.xz | tar -Jxvf -
-          #cat ~/ib-$DEVICE.tar.xz | tar -Jxvf -
+          curl -L https://github.com/${{github.repository}}/releases/download/cache/ib-$DEVICE.tar.xz | tar -Jxvf -
           set -x
           mv *imagebuilder* ib && cd ib
           . $GITHUB_WORKSPACE/scripts/merge_files.sh
