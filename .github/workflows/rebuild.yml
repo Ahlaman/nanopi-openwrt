@@ -63,7 +63,7 @@ jobs:
           curl -sL https://raw.githubusercontent.com/klever1988/nanopi-openwrt/zstd-bin/zstd | sudo tee /usr/bin/zstd > /dev/null
           for i in {1..20}
           do
-            curl -sL --fail https://github.com/${{github.repository_owner}}/sshactions/releases/download/cache/lede.$DEVICE.img.zst.0$i || break
+            curl -sL --fail https://github.com/${{github.repository}}/releases/download/cache/lede.$DEVICE.img.zst.0$i || break
           done | zstdmt -d -o lede.img || (truncate -s 33g lede.img && mkfs.btrfs -M lede.img)
           LOOP_DEVICE=$(losetup -f) && echo "LOOP_DEVICE=$LOOP_DEVICE" >> $GITHUB_ENV
           sudo losetup -P --direct-io $LOOP_DEVICE lede.img
@@ -131,8 +131,8 @@ jobs:
           set -x
           sleep 1
           export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
-          export cache_path='github.com/repos/${{github.repository_owner}}/sshactions/releases'
-          export cache_repo_id='76000857'
+          export cache_path='github.com/repos/${{github.repository}}/releases'
+          export cache_repo_id='76202864'
           sudo mount -o remount,compress=no,nodatacow,nodatasum lede
           pv /dev/zero > lede/zerospace || true; sync; rm -f lede/zerospace || true
           sleep 20
@@ -149,21 +149,25 @@ jobs:
           sync
 
           zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
-          ls
+          mkdir -p $GITHUB_WORKSPACE/release
+          mv `ls lede.$DEVICE.img.zst` $GITHUB_WORKSPACE/release
           echo '上传编译cache: lede.img'
-          for i in {1..3}; do
           ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
           echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | \
           xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
           #上传
-          ls *img.zst* | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
-          set +e
-          #成功上传才退出循环
-          for i in {1..20}; do curl -sL --fail https://github.com/${{github.repository_owner}}/sshactions/releases/download/cache/lede.$DEVICE.img.zst.0$i || break; done | zstdmt -d -o /dev/null
-          if [ $? -eq 0 ]; then break; fi
-          done
-          set -e
-          exit 1
+          #ls *img.zst* | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
+          #exit 1
+
+      - name: Upload release asset
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./release/*
+          tag: cache
+          file_glob: true
+          overwrite: true
+          release_name: cache
 
       - name: Clean build cache
         if: ${{ github.event.inputs.mclean == 'true' }}
@@ -175,6 +179,7 @@ jobs:
           
       - name: Build and deploy packages
         run: |
+          exit 1
           ulimit -SHn 65000
           cd ~/lede
           while true; do make download -j && break || true; done
@@ -295,10 +300,10 @@ jobs:
         run: |
           cd
           export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
-          export cache_path='github.com/repos/${{github.repository_owner}}/sshactions/releases'
+          export cache_path='github.com/repos/${{github.repository}}/releases'
           # 访问api.$cache_path拿到cache_repo_id
           # https://docs.github.com/cn/rest/releases/releases#list-releases
-          export cache_repo_id='76000857'
+          export cache_repo_id='76202864'
           if [ -e ~/ib-$DEVICE.tar.xz ]; then
             echo '上传imagebuilder'
             while true; do
