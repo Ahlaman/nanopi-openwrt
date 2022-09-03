@@ -104,6 +104,61 @@ jobs:
           make defconfig && sed -i -E 's/# (CONFIG_.*_COMPRESS_UPX) is not set/\1=y/' .config && make defconfig
           cat .config
 
+
+      - name: Clean space for upload cache
+        continue-on-error: true
+        run: |
+          sync
+          nohup sh -c '
+          echo "Listing 100 largest packages"
+          sudo dpkg-query -Wf '${Installed-Size}\t${Package}\n' | sort -n | tail -n 100
+          df -h
+          echo "Removing large packages"
+          sudo apt-get remove -y '^ghc-8.*' || true
+          sudo apt-get remove -y '^dotnet-.*' || true
+          sudo apt-get remove -y '^llvm-.*' || true
+          sudo apt-get remove -y 'php.*' || true
+          sudo apt-get remove -y azure-cli google-cloud-sdk hhvm google-chrome-stable firefox powershell mono-devel || true
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean || true
+          df -h
+          df -i
+          ' &
+
+      - name: Save cache state
+        run: |
+          cd
+          sleep 1
+          sudo mount -o remount,compress=no,nodatacow,nodatasum lede
+          pv /dev/zero > lede/zerospace || true; sync; rm -f lede/zerospace || true
+          sleep 20
+          sync
+          if command -v lsof 1>/dev/null;then
+            echo '检测挂载点是否有进程占用'
+            sudo lsof lede &> /tmp/mount_pid.info || true
+            awk '+$2>0&&!a[$2]++{print $2}' /tmp/mount_pid.info | sudo xargs -r -n1 kill -9 
+          fi
+          sudo umount -f ~/lede
+          sleep 2
+          sudo losetup -l -O NAME -n | grep -Eqw $LOOP_DEVICE && sudo losetup -d $LOOP_DEVICE
+          sync
+
+          zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
+          echo '上传编译cache: lede.img'
+          while true; do
+          ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
+          echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | \
+          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
+          #上传
+          ls *img.zst* | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
+          set +e
+          #成功上传才退出循环
+          for i in {1..20}; do curl -sL --fail https://github.com/${{github.repository_owner}}/sshactions/releases/download/cache/lede.$DEVICE.img.zst.0$i || break; done | zstdmt -d -o /dev/null
+          if [ $? -eq 0 ]; then break; fi
+          done
+          set -e
+          exit 1
+
       - name: Clean build cache
         if: ${{ github.event.inputs.mclean == 'true' }}
         run: |
@@ -272,7 +327,7 @@ jobs:
           cd
           sleep 1
           sudo mount -o remount,compress=no,nodatacow,nodatasum lede
-          pv /dev/zero > lede/zerospace || true; sync; rm -f zerospace
+          pv /dev/zero > lede/zerospace || true; sync; rm -f lede/zerospace || true
           sleep 20
           sync
           if command -v lsof 1>/dev/null;then
@@ -280,7 +335,7 @@ jobs:
             sudo lsof lede &> /tmp/mount_pid.info || true
             awk '+$2>0&&!a[$2]++{print $2}' /tmp/mount_pid.info | sudo xargs -r -n1 kill -9 
           fi
-          sudo umount -f lede
+          sudo umount -f ~/lede
           sleep 2
           sudo losetup -l -O NAME -n | grep -Eqw $LOOP_DEVICE && sudo losetup -d $LOOP_DEVICE
           sync
