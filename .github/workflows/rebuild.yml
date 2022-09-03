@@ -128,6 +128,7 @@ jobs:
       - name: Save cache state
         run: |
           cd
+          set -x
           sleep 1
           sudo mount -o remount,compress=no,nodatacow,nodatasum lede
           pv /dev/zero > lede/zerospace || true; sync; rm -f lede/zerospace || true
@@ -144,6 +145,7 @@ jobs:
           sync
 
           zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
+          echo `ls lede.$DEVICE.img.zst`
           echo '上传编译cache: lede.img'
           while true; do
           ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
@@ -233,6 +235,7 @@ jobs:
           echo "Space usage:"
           echo "======================="
           df -h
+          
           df -i
           echo "======================="
           du -h --max-depth=1 ./ --exclude=build_dir --exclude=bin
