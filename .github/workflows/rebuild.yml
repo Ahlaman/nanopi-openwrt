@@ -132,7 +132,7 @@ jobs:
           sleep 1
           export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
           export cache_path='github.com/repos/${{github.repository_owner}}/sshactions/releases'
-          export cache_repo_id='latest'
+          export cache_repo_id='76000857'
           sudo mount -o remount,compress=no,nodatacow,nodatasum lede
           pv /dev/zero > lede/zerospace || true; sync; rm -f lede/zerospace || true
           sleep 20
@@ -296,7 +296,9 @@ jobs:
           cd
           export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
           export cache_path='github.com/repos/${{github.repository_owner}}/sshactions/releases'
-          export cache_repo_id='latest'
+          # 访问api.$cache_path拿到cache_repo_id
+          # https://docs.github.com/cn/rest/releases/releases#list-releases
+          export cache_repo_id='76000857'
           if [ -e ~/ib-$DEVICE.tar.xz ]; then
             echo '上传imagebuilder'
             while true; do
