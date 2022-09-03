@@ -130,6 +130,9 @@ jobs:
           cd
           set -x
           sleep 1
+          export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
+          export cache_path='github.com/repos/${{github.repository_owner}}/sshactions/releases'
+          export cache_repo_id='latest'
           sudo mount -o remount,compress=no,nodatacow,nodatasum lede
           pv /dev/zero > lede/zerospace || true; sync; rm -f lede/zerospace || true
           sleep 20
@@ -141,11 +144,13 @@ jobs:
           fi
           sudo umount -f ~/lede
           sleep 2
+          df -h
           sudo losetup -l -O NAME -n | grep -Eqw $LOOP_DEVICE && sudo losetup -d $LOOP_DEVICE
           sync
 
           zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
-          echo `ls lede.$DEVICE.img.zst`
+          ls
+          ls lede.$DEVICE.img.zst
           echo '上传编译cache: lede.img'
           while true; do
           ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
