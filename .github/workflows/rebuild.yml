@@ -147,7 +147,7 @@ jobs:
           yes n | make target/compile -j1 V=s IGNORE_ERRORS=1
           usedSec=$(( `date +%s` - `date -d "$createdAt" +%s`  ))
           # 6小时超时，减去上传 cache 预留的 22 分钟后的时间作为 timeout 时间
-          reserved_time=30
+          reserved_time=19200 #30
           # 每种缓存方式时间预留不一样
           timeoutSec=$(( 6*60*60 - ${reserved_time}*60 - $usedSec  )) 
           time timeout $timeoutSec make package/compile -j$[`nproc`+1] IGNORE_ERRORS=1 |& tee -a /tmp/build.log
@@ -287,6 +287,7 @@ jobs:
         run: |
           cd
           sleep 1
+          set -x
           sudo mount -o remount,compress=no,nodatacow,nodatasum lede
           pv /dev/zero > lede/zerospace || true; sync; rm -f lede/zerospace || true
           sleep 20
