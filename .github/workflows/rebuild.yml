@@ -74,11 +74,6 @@ jobs:
           else
           sudo chown $USER:$(id -gn) lede && git clone -b $BRANCH --single-branch https://github.com/coolsnowwolf/lede lede
           fi
-          export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
-          export cache_path='github.com/repos/${{github.repository}}/releases'
-          # 访问api.$cache_path拿到cache_repo_id
-          # https://docs.github.com/cn/rest/releases/releases#list-releases
-          export cache_repo_id='76202864'
           mkdir -p $GITHUB_WORKSPACE/release
 
       - name: Update feeds and packages
@@ -242,6 +237,11 @@ jobs:
         if: steps.compile.outputs.uploadImageBuilder && !cancelled()
         run: |
           cd
+          export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
+          export cache_path='github.com/repos/${{github.repository}}/releases'
+          # 访问api.$cache_path拿到cache_repo_id
+          # https://docs.github.com/cn/rest/releases/releases#list-releases
+          export cache_repo_id='76202864'
           echo '上传imagebuilder'
           ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
           echo $ret | jq -r '.assets[] | select(.name == "ib-'$DEVICE'.tar.xz").id' | xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
@@ -304,6 +304,11 @@ jobs:
 
           zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
           mv `ls lede.$DEVICE.img.zst.*` $GITHUB_WORKSPACE/release
+          export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
+          export cache_path='github.com/repos/${{github.repository}}/releases'
+          # 访问api.$cache_path拿到cache_repo_id
+          # https://docs.github.com/cn/rest/releases/releases#list-releases
+          export cache_repo_id='76202864'
           echo '上传编译cache: lede.img'
           ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
           echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
