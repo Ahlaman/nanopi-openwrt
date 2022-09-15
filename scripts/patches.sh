@@ -121,3 +121,11 @@ esac
 if [[ $DEVICE != 'r5s' ]]; then
   sed -i 's/kmod-usb-net-rtl8152/kmod-usb-net-rtl8152-vendor/' target/linux/rockchip/image/armv8.mk target/linux/sunxi/image/cortexa53.mk target/linux/sunxi/image/cortexa7.mk
 fi
+
+case $DEVICE in
+  r2s|r2c)
+  # 交换 LAN/WAN 口
+  sed -i 's,"eth1" "eth0","eth0" "eth1",g' target/linux/rockchip/armv8/base-files/etc/board.d/02_network
+  sed -i "s,'eth1' 'eth0','eth0' 'eth1',g" target/linux/rockchip/armv8/base-files/etc/board.d/02_network
+  ;;
+esac
